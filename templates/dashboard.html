@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Log Res</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h2>Welcome, {{ user.username }}!</h2>
+        
+        <div class="user-details">
+            <h3>Your Profile</h3>
+            <p><strong>Username:</strong> {{ user.username }}</p>
+            <p><strong>Email:</strong> {{ user.email }}</p>
+            <p><strong>Member Since:</strong> {{ user.created_at.strftime('%B %d, %Y') if user.created_at else 'N/A' }}</p>
+        </div>
+        
+        <div class="user-list">
+            <h3>All Users ({{ all_users|length }})</h3>
+            {% if all_users %}
+                <div class="users-table">
+                    {% for u in all_users %}
+                    <div class="user-item">
+                        <div class="user-info">
+                            <strong>{{ u.username }}</strong>
+                            <span>{{ u.email }}</span>
+                            <small>Joined: {{ u.created_at.strftime('%B %d, %Y') if u.created_at else 'N/A' }}</small>
+                        </div>
+                        {% if u.id != user.id %}
+                        <form action="/delete-user/{{ u.id }}" method="post" onsubmit="return confirm('Are you sure you want to remove {{ u.username }}?');">
+                            <button type="submit" class="remove-btn">Remove</button>
+                        </form>
+                        {% else %}
+                        <span class="current-user-badge">You</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p>No users found.</p>
+            {% endif %}
+        </div>
+        
+        <form action="/logout" method="get">
+            <button type="submit" class="logout-btn">Logout</button>
+        </form>
+    </div>
+</body>
+</html>
