@@ -1,19 +1,12 @@
 [build]
-  command = "pip install -r netlify/functions/api/requirements.txt"
   publish = "static"
   functions = "netlify/functions"
 
 [functions]
   directory = "netlify/functions"
-  node_bundler = "esbuild"
 
 [[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/api/:splat"
-  status = 200
-
-[[redirects]]
+  force = true
   from = "/*"
   to = "/.netlify/functions/api/:splat"
   status = 200
-  force = true
