@@ -254,6 +254,5 @@ def home():
     return RedirectResponse("/login", status_code=303)
 
 
-# Wrap with Mangum for AWS Lambda/Netlify compatibility
-from mangum import Mangum
-handler = Mangum(app)
+# Netlify serverless function handler
+handler = app
