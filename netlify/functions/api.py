@@ -1,9 +1,11 @@
 """Netlify serverless function entry point for FastAPI."""
 import os
 import sys
+import json
 
 # Add project root to Python path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, BASE_DIR)
 
 from fastapi import FastAPI, Request, Form, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -20,10 +22,6 @@ load_dotenv()
 # MongoDB connection settings
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "log_res")
-
-# MongoDB clients
-sync_client = MongoClient(MONGODB_URL)
-sync_database = sync_client[DATABASE_NAME]
 
 # Async client
 async_client = None
@@ -256,5 +254,6 @@ def home():
     return RedirectResponse("/login", status_code=303)
 
 
-# Netlify serverless function handler
-handler = app
+# Wrap with Mangum for AWS Lambda/Netlify compatibility
+from mangum import Mangum
+handler = Mangum(app)
