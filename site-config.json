@@ -1,0 +1,10 @@
+{
+  "repo": {
+    "provider": "github",
+    "repo": "buildwithviruthika/sample-register-login",
+    "branch": "main",
+    "cmd": "pip install -r netlify/functions/api/requirements.txt",
+    "dir": "public",
+    "functions_dir": "netlify/functions"
+  }
+}
