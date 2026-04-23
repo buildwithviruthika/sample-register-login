@@ -1,26 +1,30 @@
 from fastapi import FastAPI, Request, Form, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy.orm import Session
-from backend.database import SessionLocal, engine, Base
-from backend.models import User
-from backend.auth import hash_password, verify_password
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, EmailStr, validator
+from motor.motor_asyncio import AsyncIOMotorCollection
+from pymongo import MongoClient
+from bson import ObjectId
 import re
 
+from backend.database import get_users_collection, get_sync_users_collection
+from backend.models import User
+from backend.auth import hash_password, verify_password
+
 app = FastAPI()
-Base.metadata.create_all(bind=engine)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def get_users_collection():
+    """Dependency function to get MongoDB users collection.
+    
+    Returns:
+        MongoDB users collection
+    """
+    from backend.database import get_users_collection as get_collection
+    return await get_collection()
 
 def validate_password(password: str) -> tuple[bool, str]:
     """Validate password strength"""
@@ -54,7 +58,7 @@ def register_page(request: Request):
     return templates.TemplateResponse("register.html", {"request": request, "error": None})
 
 @app.post("/register")
-def register(request: Request, username: str = Form(...), email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+async def register(request: Request, username: str = Form(...), email: str = Form(...), password: str = Form(...), users_collection: AsyncIOMotorCollection = Depends(get_users_collection)):
     # Validate username
     username_valid, username_error = validate_username(username)
     if not username_valid:
@@ -70,19 +74,19 @@ def register(request: Request, username: str = Form(...), email: str = Form(...)
         return templates.TemplateResponse("register.html", {"request": request, "error": password_error})
     
     # Check if username already exists
-    existing_user = db.query(User).filter(User.username == username).first()
+    existing_user = await users_collection.find_one({"username": username})
     if existing_user:
         return templates.TemplateResponse("register.html", {"request": request, "error": "Username already exists"})
     
     # Check if email already exists
-    existing_email = db.query(User).filter(User.email == email).first()
+    existing_email = await users_collection.find_one({"email": email})
     if existing_email:
         return templates.TemplateResponse("register.html", {"request": request, "error": "Email already registered"})
     
     # Create user
-    user = User(username=username, email=email, password=hash_password(password))
-    db.add(user)
-    db.commit()
+    user_data = User.create_new(username, email, hash_password(password))
+    await users_collection.insert_one(user_data)
+    
     return RedirectResponse("/login?registered=true", status_code=303)
 
 @app.get("/login", response_class=HTMLResponse)
@@ -94,40 +98,44 @@ def login_page(request: Request, registered: bool = False, error: str = None):
     })
 
 @app.post("/login")
-def login(request: Request, username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+async def login(request: Request, username: str = Form(...), password: str = Form(...), users_collection: AsyncIOMotorCollection = Depends(get_users_collection)):
     if not username or not password:
         return templates.TemplateResponse("login.html", {
             "request": request,
             "error": "Please fill in all fields"
         })
     
-    user = db.query(User).filter(User.username == username).first()
+    user_doc = await users_collection.find_one({"username": username})
 
-    if not user:
+    if not user_doc:
         return templates.TemplateResponse("login.html", {
             "request": request,
             "error": "Invalid username or password"
         })
 
-    if not verify_password(password, user.password):
+    if not verify_password(password, user_doc["password"]):
         return templates.TemplateResponse("login.html", {
             "request": request,
             "error": "Invalid username or password"
         })
 
     response = RedirectResponse("/dashboard", status_code=303)
-    response.set_cookie(key="user", value=user.username, httponly=True, secure=False, samesite="lax")
+    response.set_cookie(key="user", value=user_doc["username"], httponly=True, secure=False, samesite="lax")
     return response
 
 @app.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, db: Session = Depends(get_db)):
+async def dashboard(request: Request, users_collection: AsyncIOMotorCollection = Depends(get_users_collection)):
     username = request.cookies.get("user")
 
     if not username:
         return RedirectResponse("/login")
 
-    user = db.query(User).filter(User.username == username).first()
-    all_users = db.query(User).order_by(User.created_at.desc()).all()
+    user_doc = await users_collection.find_one({"username": username})
+    all_users_docs = await users_collection.find().sort("created_at", -1).to_list(length=None)
+    
+    # Convert to User objects for template compatibility
+    user = User.from_mongo_doc(user_doc) if user_doc else None
+    all_users = [User.from_mongo_doc(doc) for doc in all_users_docs]
 
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
@@ -142,23 +150,25 @@ def logout():
     return response
 
 @app.post("/delete-user/{user_id}")
-def delete_user(user_id: int, request: Request, db: Session = Depends(get_db)):
+async def delete_user(user_id: str, request: Request, users_collection: AsyncIOMotorCollection = Depends(get_users_collection)):
     username = request.cookies.get("user")
     
     if not username:
         return RedirectResponse("/login")
     
-    current_user = db.query(User).filter(User.username == username).first()
+    current_user_doc = await users_collection.find_one({"username": username})
     
     # Prevent users from deleting themselves
-    if current_user.id == user_id:
+    if current_user_doc and str(current_user_doc["_id"]) == user_id:
         return RedirectResponse("/dashboard")
     
-    user_to_delete = db.query(User).filter(User.id == user_id).first()
-    
-    if user_to_delete:
-        db.delete(user_to_delete)
-        db.commit()
+    # Delete user by ObjectId
+    try:
+        object_id = ObjectId(user_id)
+        result = await users_collection.delete_one({"_id": object_id})
+    except:
+        # If ObjectId conversion fails, try with string ID
+        result = await users_collection.delete_one({"id": user_id})
     
     return RedirectResponse("/dashboard", status_code=303)
 
